@@ -552,6 +552,7 @@ int main ( int argc, char **argv ) {
 	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_v), Mod4Mask|Mod1Mask);
 	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_c), Mod4Mask|Mod1Mask);
 	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_d), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_f), Mod4Mask|Mod1Mask);
 	XSelectInput(dpy, root, KeyPressMask);
 
 
@@ -563,7 +564,7 @@ int main ( int argc, char **argv ) {
 	SDL_Init(SDL_INIT_VIDEO);
 	TTF_Init();
 	TTF_Font *font = TTF_OpenFont("RobotoMono-Regular.ttf", g.font_size);
-	//TTF_Font *font_small = TTF_OpenFont("RobotoMono-Regular.ttf", g.font_size/4);
+	TTF_Font *font_small = TTF_OpenFont("RobotoMono-Regular.ttf", g.font_size/2);
 
 	/*
 	 * Get the required window size.
@@ -603,6 +604,7 @@ int main ( int argc, char **argv ) {
 		char buf[100];
 		char range[100];
 		char value[100];
+		char rs[100];
 
 		int mi = 0;
 
@@ -627,6 +629,9 @@ int main ( int argc, char **argv ) {
 								break;
 							case XK_d:
 								data_write( &g, mmodes[MMODES_DIOD].query, strlen(mmodes[MMODES_DIOD].query) );
+								break;
+							case XK_f:
+								data_write( &g, mmodes[MMODES_CAP].query, strlen(mmodes[MMODES_CAP].query) );
 								break;
 							default:
 								break;
@@ -683,22 +688,49 @@ int main ( int argc, char **argv ) {
 			double v = strtod(buf, NULL);
 
 			snprintf(value, sizeof(value), "%f", v);
+			snprintf(rs, sizeof(rs), " ");
 
 			switch (mi) {
 				case MMODES_VOLT_DC:
-					if (strcmp(range,"0.5")==0) snprintf(value,sizeof(value),"% 07.2f mV DC", v *1000.0);
-					else if (strcmp(range, "5")==0) snprintf(value, sizeof(value), "% 07.4f V DC", v);
-					else if (strcmp(range, "50")==0) snprintf(value, sizeof(value), "% 07.3f V DC", v);
-					else if (strcmp(range, "500")==0) snprintf(value, sizeof(value), "% 07.2f V DC", v);
-					else if (strcmp(range, "1000")==0) snprintf(value, sizeof(value), "% 07.1f V DC", v);
+					if (strcmp(range,"0.5")==0) { 
+						snprintf(value,sizeof(value),"% 07.2f mV DC", v *1000.0);
+						snprintf(rs,sizeof(rs),"500mV");
+					}
+					else if (strcmp(range, "5")==0) { 
+						snprintf(value, sizeof(value), "% 07.4f V DC", v);
+						snprintf(rs,sizeof(rs),"5V");
+					}
+					else if (strcmp(range, "50")==0) { 
+						snprintf(value, sizeof(value), "% 07.3f V DC", v);
+						snprintf(rs,sizeof(rs),"50V");
+					}
+					else if (strcmp(range, "500")==0) { 
+						snprintf(value, sizeof(value), "% 07.2f V DC", v);
+						snprintf(rs,sizeof(rs),"500V");
+					}
+					else if (strcmp(range, "1000")==0) { 
+						snprintf(value, sizeof(value), "% 07.1f V DC", v);
+						snprintf(rs,sizeof(rs),"1000V");
+					}
 					break;
 
 				case MMODES_VOLT_AC:
-					if (strcmp(range,"0.5")==0) snprintf(value,sizeof(value),"% 07.2f mV AC", v *1000.0);
-					else if (strcmp(range, "5")==0) snprintf(value, sizeof(value), "% 07.4f V AC", v);
-					else if (strcmp(range, "50")==0) snprintf(value, sizeof(value), "% 07.3f V AC", v);
-					else if (strcmp(range, "500")==0) snprintf(value, sizeof(value), "% 07.2f V AC", v);
-					else if (strcmp(range, "750")==0) snprintf(value, sizeof(value), "% 07.1f V AC", v);
+					if (strcmp(range,"0.5")==0) { 
+						snprintf(value,sizeof(value),"% 07.2f mV AC", v *1000.0);
+						snprintf(rs,sizeof(rs),"500mV");
+					}
+					else if (strcmp(range, "5")==0) { snprintf(value, sizeof(value), "% 07.4f V AC", v);
+						snprintf(rs,sizeof(rs),"5V");
+					}
+					else if (strcmp(range, "50")==0) { snprintf(value, sizeof(value), "% 07.3f V AC", v);
+						snprintf(rs,sizeof(rs),"50V");
+					}
+					else if (strcmp(range, "500")==0) { snprintf(value, sizeof(value), "% 07.2f V AC", v);
+						snprintf(rs,sizeof(rs),"500V");
+					}
+					else if (strcmp(range, "750")==0) { snprintf(value, sizeof(value), "% 07.1f V AC", v);
+						snprintf(rs,sizeof(rs),"750V");
+					}
 					break;
 
 				case MMODES_VOLT_DCAC:
@@ -728,21 +760,32 @@ int main ( int argc, char **argv ) {
 					break;
 
 				case MMODES_RES:
-					if (strcmp(range,"50E+1")==0) snprintf(value,sizeof(value),"%06.2f %s", v, oo);
-					else if (strcmp(range, "50E+2")==0) snprintf(value, sizeof(value), "%06.4f k%s", v, oo);
-					else if (strcmp(range, "50E+3")==0) snprintf(value, sizeof(value), "%06.3f k%s", v, oo);
-					else if (strcmp(range, "50E+4")==0) snprintf(value, sizeof(value), "%06.2f k%s", v, oo);
-					else if (strcmp(range, "50E+5")==0) snprintf(value, sizeof(value), "%06.1f M%s", v, oo);
-					else if (strcmp(range, "50E+6")==0) snprintf(value, sizeof(value), "%06.3f M%s", v, oo);
+					if (strcmp(range,"50E+1")==0) { snprintf(value,sizeof(value),"%06.2f %s", v, oo);
+						snprintf(rs,sizeof(rs),"500%s",oo); }
+					else if (strcmp(range, "50E+2")==0){ snprintf(value, sizeof(value), "%06.4f k%s", v /1000, oo);
+						snprintf(rs,sizeof(rs),"5K%s",oo); }
+					else if (strcmp(range, "50E+3")==0){ snprintf(value, sizeof(value), "%06.3f k%s", v /1000, oo);
+						snprintf(rs,sizeof(rs),"50K%s",oo); }
+					else if (strcmp(range, "50E+4")==0){ snprintf(value, sizeof(value), "%06.2f k%s", v /1000, oo);
+						snprintf(rs,sizeof(rs),"500K%s",oo); }
+					else if (strcmp(range, "50E+5")==0){ snprintf(value, sizeof(value), "%06.4f M%s", v /1000000, oo);
+						snprintf(rs,sizeof(rs),"5M%s",oo); }
+					else if (strcmp(range, "50E+6")==0){ snprintf(value, sizeof(value), "%06.3f M%s", v /1000000, oo);
+						snprintf(rs,sizeof(rs),"50M%s",oo); }
 					if (v >= 51000000000000) snprintf(value, sizeof(value), "O.L");
 					break;
 
 				case MMODES_CAP:
-					if (strcmp(range,"5E-9")==0) snprintf(value,sizeof(value),"% 6.3f nF", v *1E+9 );
-					else if (strcmp(range, "5E-8")==0) snprintf(value, sizeof(value), "% 06.2f nF", v *1E+9);
-					else if (strcmp(range, "5E-7")==0) snprintf(value, sizeof(value), "% 06.1f nF", v *1E+9);
-					else if (strcmp(range, "5E-6")==0) snprintf(value, sizeof(value), "% 06.3f %sF", v *1E+6, uu);
-					else if (strcmp(range, "5E-5")==0) snprintf(value, sizeof(value), "% 06.2f %sF", v *1E+6, uu);
+					if (strcmp(range,"5E-9")==0) { snprintf(value,sizeof(value),"% 6.3f nF", v *1E+9 );
+						snprintf(rs,sizeof(rs),"5nF"); }
+					else if (strcmp(range, "5E-8")==0){ snprintf(value, sizeof(value), "% 06.2f nF", v *1E+9);
+						snprintf(rs,sizeof(rs),"50nF"); }
+					else if (strcmp(range, "5E-7")==0){ snprintf(value, sizeof(value), "% 06.1f nF", v *1E+9);
+						snprintf(rs,sizeof(rs),"500nF"); }
+					else if (strcmp(range, "5E-6")==0){ snprintf(value, sizeof(value), "% 06.3f %sF", v *1E+6, uu);
+						snprintf(rs,sizeof(rs),"5%sF",uu); }
+					else if (strcmp(range, "5E-5")==0){ snprintf(value, sizeof(value), "% 06.2f %sF", v *1E+6, uu);
+						snprintf(rs,sizeof(rs),"50%sF",uu); }
 					if (v >= 51000000000000) snprintf(value, sizeof(value), "O.L");
 					break;
 
@@ -761,6 +804,7 @@ int main ( int argc, char **argv ) {
 						else {
 							snprintf(value, sizeof(value), "SHRT [%05.1f%s]", v, oo);
 						}
+						snprintf(rs,sizeof(rs),"None");
 					}
 					break;
 
@@ -771,13 +815,14 @@ int main ( int argc, char **argv ) {
 						} else {
 							snprintf(value, sizeof(value), "%06.4f V", v);
 						}
+						snprintf(rs,sizeof(rs),"None");
 					}
 					break;
 
 
 			}
 			snprintf(line1, sizeof(line1), "%s", value);
-			snprintf(line2, sizeof(line2), "%s", mmodes[mi].label);
+			snprintf(line2, sizeof(line2), "%s, %s", mmodes[mi].label, rs);
 			if (g.debug) fprintf(stderr,"Value:%f Range: %s\n", v, range);
 
 		} else {
@@ -809,7 +854,7 @@ int main ( int argc, char **argv ) {
 			SDL_Rect dstrect = { 0, 0, texW, texH };
 			SDL_RenderCopy(renderer, texture, NULL, &dstrect);
 
-			surface_2 = TTF_RenderUTF8_Blended(font, line2, g.font_color_sec);
+			surface_2 = TTF_RenderUTF8_Blended(font_small, line2, g.font_color_sec);
 			texture_2 = SDL_CreateTextureFromSurface(renderer, surface_2);
 			SDL_QueryTexture(texture_2, NULL, NULL, &texW2, &texH2);
 			dstrect = { 0, texH -(texH /5), texW2, texH2 };
