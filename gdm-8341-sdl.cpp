@@ -25,6 +25,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/XKBlib.h>
 
 #define FL __FILE__,__LINE__
 
@@ -97,6 +98,8 @@ struct mmode_s mmodes[] = {
 	{"CAP", "Capacitance", "MEAS:CAP?\r\n"}
 };
 
+const char SCPI_FUNC[] = "SENS:FUNC1?\r\n";
+const char SCPI_VAL[] = "VAL1?\r\n";
 
 char SEPARATOR_DP[] = ".";
 
@@ -413,20 +416,20 @@ void open_port( struct glb *g ) {
 	tcgetattr(s->fd,&(s->oldtp)); // save current serial port settings 
 	tcgetattr(s->fd,&(s->newtp)); // save current serial port settings in to what will be our new settings
 	cfmakeraw(&(s->newtp));
-	
-		s->newtp.c_cflag = CS8 |  CLOCAL | CREAD ; 
 
-      if (strncmp(p, "115200:", 7) == 0) s->newtp.c_cflag |= B115200; 
-		else if (strncmp(p, "57600:", 6) == 0) s->newtp.c_cflag |= B57600;
-		else if (strncmp(p, "38400:", 6) == 0) s->newtp.c_cflag |= B38400;
-		else if (strncmp(p, "19200:", 6) == 0) s->newtp.c_cflag |= B19200;
-		else if (strncmp(p, "9600:", 5) == 0) s->newtp.c_cflag |= B9600;
-      else {
-         fprintf(stdout,"Invalid serial speed\r\n");
-         exit(1);
-      }
+	s->newtp.c_cflag = CS8 |  CLOCAL | CREAD ; 
 
-		//  This meter only accepts 8n1, no flow control
+	if (strncmp(p, "115200:", 7) == 0) s->newtp.c_cflag |= B115200; 
+	else if (strncmp(p, "57600:", 6) == 0) s->newtp.c_cflag |= B57600;
+	else if (strncmp(p, "38400:", 6) == 0) s->newtp.c_cflag |= B38400;
+	else if (strncmp(p, "19200:", 6) == 0) s->newtp.c_cflag |= B19200;
+	else if (strncmp(p, "9600:", 5) == 0) s->newtp.c_cflag |= B9600;
+	else {
+		fprintf(stdout,"Invalid serial speed\r\n");
+		exit(1);
+	}
+
+	//  This meter only accepts 8n1, no flow control
 
 	s->newtp.c_iflag &= ~(IXON | IXOFF | IXANY );
 
@@ -448,83 +451,34 @@ uint8_t a2h( uint8_t a ) {
 
 int data_read( glb *g, char *b, ssize_t s ) {
 	ssize_t sz;
-	if (g->comms_mode == CMODE_USB) {
-		/*
-		 * usb mode read
-		 *
-		 */
-		int bp = 0;
-		do {
-			sz = read(g->usb_fhandle, b+bp, s -1 -bp);
-			b[bp+sz] = '\0';
+	int bp = 0;
+	ssize_t bytes_read = 0;
 
-			if (sz == -1) {
-				g->error_flag = true;
-				fprintf(stdout,"Error reading data: %s\n", strerror(errno));
-				snprintf(b, s, "NODATA");
-				break;
+	do {
+		char temp_char;
+		bytes_read = read(g->serial_params.fd, &temp_char, 1);
+		if (bytes_read) {
+			b[bp] = temp_char;
+			if (b[bp] == '\n') break;
+			if (b[bp] != '\r') {
+				if (g->debug) fprintf(stderr,"%c", b[bp]);
+				bp++;
 			}
+		}
+	} while (bytes_read && bp < s);
+	b[bp] = '\0';
 
-			bp += sz;
-			if (sz == 0) break;
-			if (bp >= s) break;
-			usleep(1000);
-		} while (sz);
-		b[bp] = '\0';
-		if ((bp > 0) && b[bp-1] == '\n') b[bp -1] = '\0';
-
-	} else {
-		/*
-		 * serial mode read
-		 *
-		 */
-		int bp = 0;
-		ssize_t bytes_read = 0;
-
-		do {
-			char temp_char;
-			bytes_read = read(g->serial_params.fd, &temp_char, 1);
-			if (bytes_read) {
-				b[bp] = temp_char;
-				if (b[bp] == '\n') break;
-				if (b[bp] != '\r') {
-					if (g->debug) fprintf(stderr,"%c", b[bp]);
-					bp++;
-				}
-			}
-		} while (bytes_read && bp < s);
-		b[bp] = '\0';
-	}
 	return sz;
 }
 
-int data_write( glb *g, char *d, ssize_t s ) { 
-		ssize_t sz;
+int data_write( glb *g, const char *d, ssize_t s ) { 
+	ssize_t sz;
 
-		if (g->debug) fprintf(stderr,"%s:%d: Sending '%s' [%ld bytes]\n", FL, d, s );
-	if (g->comms_mode == CMODE_USB) {
-		/*
-		 * usb mode write
-		 *
-		 */
-		sz = write(g->usb_fhandle, d, s); //"MEAS:VOLT?", sizeof("MEAS:VOLT?"));
-		if (sz < 0) {
-			g->error_flag = true;
-			fprintf(stdout,"Error sending USB data: %s\n", strerror(errno));
-			snprintf(d,s-1,"NODATA");
-			//exit(1);
-		}
-	} else {
-		/*
-		 * serial mode write
-		 *
-		 */
-		sz = write(g->serial_params.fd, d, s); 
-		if (sz < 0) {
-			g->error_flag = true;
-			fprintf(stdout,"Error sending serial data: %s\n", strerror(errno));
-			snprintf(d,s-1,"NODATA");
-		}
+	if (g->debug) fprintf(stderr,"%s:%d: Sending '%s' [%ld bytes]\n", FL, d, s );
+	sz = write(g->serial_params.fd, d, s); 
+	if (sz < 0) {
+		g->error_flag = true;
+		fprintf(stdout,"Error sending serial data: %s\n", strerror(errno));
 	}
 
 	return sz;
@@ -535,9 +489,9 @@ void grab_key(Display* display, Window rootWindow, int keycode, int modifier) {
 	XGrabKey(display, keycode, modifier, rootWindow, false, GrabModeAsync, GrabModeAsync);
 
 	if (modifier != AnyModifier) {
-			XGrabKey(display, keycode, modifier | Mod2Mask, rootWindow, false, GrabModeAsync, GrabModeAsync);
-			XGrabKey(display, keycode, modifier | LockMask, rootWindow, false, GrabModeAsync, GrabModeAsync);
-			XGrabKey(display, keycode, modifier | Mod2Mask | LockMask, rootWindow, false, GrabModeAsync, GrabModeAsync);
+		XGrabKey(display, keycode, modifier | Mod2Mask, rootWindow, false, GrabModeAsync, GrabModeAsync);
+		XGrabKey(display, keycode, modifier | LockMask, rootWindow, false, GrabModeAsync, GrabModeAsync);
+		XGrabKey(display, keycode, modifier | Mod2Mask | LockMask, rootWindow, false, GrabModeAsync, GrabModeAsync);
 	}
 }
 
@@ -590,18 +544,10 @@ int main ( int argc, char **argv ) {
 		exit(1);
 	}
 
-	fprintf(stdout,"START\n");
+	if (g.debug) fprintf(stdout,"START\n");
 
-	if (strstr(g.device,"usbtmc")) {
-		fprintf(stdout,"\nUsing USB mode\n\n");
-		fflush(stdout);
-		g.comms_mode = CMODE_USB;
-	} else {
-		fprintf(stdout,"\nUsing SERIAL mode\n\n");
-		fflush(stdout);
-		g.comms_mode = CMODE_SERIAL;
-		g.serial_params.device = g.device;
-	}
+	g.comms_mode = CMODE_SERIAL;
+	g.serial_params.device = g.device;
 
 	/* 
 	 * check paramters
@@ -613,56 +559,38 @@ int main ( int argc, char **argv ) {
 	if (g.output_file) snprintf(tfn,sizeof(tfn),"%s.tmp",g.output_file);
 
 
-	if ( g.comms_mode == CMODE_SERIAL ) {
-		/* 
-		 * handle the serial port
-		 *
-		 */
-		open_port( &g );
+	open_port( &g );
 
-	} else {
-		/*
-		 * Handle the USB port
-		 *
-		 */
+	Display*    dpy     = XOpenDisplay(0);
+	Window      root    = DefaultRootWindow(dpy);
+	XEvent      ev;
 
-		g.usb_fhandle = open( g.device, O_RDWR );
-		if (g.usb_fhandle == -1) {
-			fprintf(stdout, "Error opening device [%s] : %s\n", g.device, strerror(errno));
-			exit (1);
-		}
-	}
-
-	  Display*    dpy     = XOpenDisplay(0);
-     Window      root    = DefaultRootWindow(dpy);
-     XEvent      ev;
-
-     unsigned int    modifiers       = ControlMask | ShiftMask;
-     int             keycode         = XKeysymToKeycode(dpy,XK_K);
-     Window          grab_window     =  root;
-     Bool            owner_events    = true;
-     int             pointer_mode    = GrabModeAsync;
-     int             keyboard_mode   = GrabModeAsync;
+	unsigned int    modifiers       = ControlMask | ShiftMask;
+	int             keycode         = XKeysymToKeycode(dpy,XK_K);
+	Window          grab_window     =  root;
+	Bool            owner_events    = true;
+	int             pointer_mode    = GrabModeAsync;
+	int             keyboard_mode   = GrabModeAsync;
 
 
-	  // Shift key = ShiftMask / 0x01
-	  // CapLocks = LockMask / 0x02
-	  // Control = ControlMask / 0x04
-	  // Alt = Mod1Mask / 0x08
-	  //
-	  // Numlock = Mod2Mask / 0x10
-	  // Windows key = Mod4Mask / 0x40
+	// Shift key = ShiftMask / 0x01
+	// CapLocks = LockMask / 0x02
+	// Control = ControlMask / 0x04
+	// Alt = Mod1Mask / 0x08
+	//
+	// Numlock = Mod2Mask / 0x10
+	// Windows key = Mod4Mask / 0x40
 
-     //grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_R), ControlMask|Mod1Mask);
-//     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_V), ControlMask|Mod1Mask);
-  //   grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_C), ControlMask|Mod1Mask);
-    // grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_D), ControlMask|Mod1Mask);
-//     XSelectInput(dpy, root, KeyPressMask);
-     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_R), Mod4Mask|Mod1Mask);
-     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_V), Mod4Mask|Mod1Mask);
-     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_C), Mod4Mask|Mod1Mask);
-     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_D), Mod4Mask|Mod1Mask);
-     XSelectInput(dpy, root, KeyPressMask);
+	//grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_R), ControlMask|Mod1Mask);
+	//     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_V), ControlMask|Mod1Mask);
+	//   grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_C), ControlMask|Mod1Mask);
+	// grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_D), ControlMask|Mod1Mask);
+	//     XSelectInput(dpy, root, KeyPressMask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_R), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_V), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_C), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_D), Mod4Mask|Mod1Mask);
+	XSelectInput(dpy, root, KeyPressMask);
 
 
 	/*
@@ -720,37 +648,39 @@ int main ( int argc, char **argv ) {
 		ssize_t bytes_read = 0;
 		ssize_t sz;
 
-		if (XCheckMaskEvent(dpy, KeyPressMask, &ev)) {
-			KeySym ks;
-			fprintf(stderr,"Keypress event %X\n", ev.type);
-         switch (ev.type) {
-             case KeyPress:
-					 ks = XKeycodeToKeysym(dpy,ev.xkey.keycode,0);
-					 fprintf(stderr,"Hot key pressed %X => %x!\n", ev.xkey.keycode, ks);
-					 switch (ks) {
-						 case XK_r:
+		if (!paused && !quit) {
+			if (XCheckMaskEvent(dpy, KeyPressMask, &ev)) {
+				KeySym ks;
+				if (g.debug) fprintf(stderr,"Keypress event %X\n", ev.type);
+				switch (ev.type) {
+					case KeyPress:
+						//					ks = XKeycodeToKeysym(dpy,ev.xkey.keycode,0);
+						ks = XkbKeycodeToKeysym(dpy, ev.xkey.keycode, 0, 0);
+						if (g.debug) fprintf(stderr,"Hot key pressed %X => %lx!\n", ev.xkey.keycode, ks);
+						switch (ks) {
+							case XK_r:
 								data_write( &g, mmodes[MMODES_RES].query, strlen(mmodes[MMODES_RES].query) );
-							 break;
-						 case XK_v:
+								break;
+							case XK_v:
 								data_write( &g, mmodes[MMODES_VOLT_DC].query, strlen(mmodes[MMODES_VOLT_DC].query) );
-							 break;
-						 case XK_c:
+								break;
+							case XK_c:
 								data_write( &g, mmodes[MMODES_CONT].query, strlen(mmodes[MMODES_CONT].query) );
-							 break;
-						 case XK_d:
+								break;
+							case XK_d:
 								data_write( &g, mmodes[MMODES_DIOD].query, strlen(mmodes[MMODES_DIOD].query) );
-							 break;
-						 default:
-							 break;
-					 } // keycode
-                break;
+								break;
+							default:
+								break;
+						} // keycode
+						break;
 
-             default:
-                 break;
-         }
-		} // check mask
+					default:
+						break;
+				}
+			} // check mask
+		}
 
-		/*
 		while (SDL_PollEvent(&event)) {
 			switch (event.type)
 			{
@@ -770,31 +700,17 @@ int main ( int argc, char **argv ) {
 			}
 		}
 
-		*/
 		linetmp[0] = '\0';
 
 
-		/*
-		if (g.error_flag) {
-			f = open( g.device, O_RDWR );
-			if (f == -1) {
-				fprintf(stdout, "Error opening device [%s] : %s\n", g.device, strerror(errno));
-				sleep(1);
-			} else {
-				error_flag = false;
-			}
-
-		}
-		*/
-
 		if (!paused && !quit) {
-			sz = data_write( &g, "SENS:FUNC1?\r\n", strlen("SENS:FUNC1?\r\n"));
+			sz = data_write( &g, SCPI_FUNC, strlen(SCPI_FUNC));
 			usleep(2000);
 			sz = data_read( &g, buf, sizeof(buf) );
 			for (mi = 0; mi < MMODES_MAX; mi++) {
 				if (strcmp(buf, mmodes[mi].scpi)==0) {
 					if (g.debug) fprintf(stderr,"%s:%d: HIT on '%s' index %d\n", FL, buf, mi);
-					sz = data_write( &g, "VAL1?\r\n", strlen("VAL1?\r\n") );
+					sz = data_write( &g, SCPI_VAL, strlen(SCPI_VAL) );
 					sz = data_read( &g, buf, sizeof(buf) );
 					break;
 				}
@@ -881,7 +797,7 @@ int main ( int argc, char **argv ) {
 		close(g.usb_fhandle);
 	}
 
-   XCloseDisplay(dpy);
+	XCloseDisplay(dpy);
 
 	TTF_CloseFont(font);
 	SDL_DestroyRenderer(renderer);
