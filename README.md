@@ -26,9 +26,14 @@ Run from the command line
 	./gdm-8341-sdl -p /dev/ttyUSB0
 
 
+### Keyboard bindings
+	p : pause/unpause; use this for when you need to access the front panel
+	q : quit
 
-
-
-
+	(the following work anywhere in the X desktop, you do not have to be 'focused' on the app)
+	win-alt-v : change to volts mode
+	win-alt-r : change to resistance mode
+	win-alt-c : change to continuity mode
+	win-alt-d : change to diode mode
 
 # gdm-8341
