@@ -46,7 +46,6 @@
 
 #define INTERFRAME_SLEEP	200000 // 0.2 seconds
 
-#define DATA_FRAME_SIZE 12
 #define ee ""
 #define uu "\u00B5"
 #define kk "k"
@@ -101,7 +100,7 @@ struct mmode_s mmodes[] = {
 const char SCPI_FUNC[] = "SENS:FUNC1?\r\n";
 const char SCPI_VAL[] = "VAL1?\r\n";
 
-char SEPARATOR_DP[] = ".";
+const char SEPARATOR_DP[] = ".";
 
 struct serial_params_s {
 	char *device;
@@ -155,30 +154,6 @@ bool fileExists(const char *filename) {
 	return (stat(filename, &buf) == 0);
 }
 
-
-char digit( unsigned char dg ) {
-
-	int d;
-	char g;
-
-	switch (dg) {
-		case 0x30: g = '0'; d = 0; break;
-		case 0x31: g = '1'; d = 1; break;
-		case 0x32: g = '2'; d = 2; break;
-		case 0x33: g = '3'; d = 3; break;
-		case 0x34: g = '4'; d = 4; break;
-		case 0x35: g = '5'; d = 5; break;
-		case 0x36: g = '6'; d = 6; break;
-		case 0x37: g = '7'; d = 7; break;
-		case 0x38: g = '8'; d = 8; break;
-		case 0x39: g = '9'; d = 9; break;
-		case 0x3E: g = 'L'; d = 0; break;
-		case 0x3F: g = ' '; d = 0; break;
-		default: g = ' ';
-	}
-
-	return g;
-}
 
 /*-----------------------------------------------------------------\
   Date Code:	: 20180127-220248
@@ -238,9 +213,9 @@ void show_help(void) {
 			"\t-cb <background colour, 101010>\r\n"
 			"\t-t <interval> (sleep delay between samples, default 100,000us)\r\n"
 			"\t-p <comport>: Set the com port for the meter, eg: -p /dev/ttyUSB0\r\n"
-			"\t-s <[115200|57600|38400|19200|9600:8n1>, eg: -s 38400:8n1\r\n"
+			"\t-s <115200|57600|38400|19200|9600> serial speed (default 115200)\r\n"
 			"\r\n"
-			"\texample: gdm-8341-sdl -p /dev/ttyUSB0\r\n"
+			"\texample: gdm-8341-sdl -p /dev/ttyUSB0 -s 115200\r\n"
 			, BUILD_VER
 			, BUILD_DATE 
 			);
@@ -401,7 +376,7 @@ void open_port( struct glb *g ) {
 
 	struct serial_params_s *s = &(g->serial_params);
 	char *p = g->serial_parameters_string;
-	char default_params[] = "115200:8:n";
+	char default_params[] = "115200";
 	int r; 
 
 	if (!p) p = default_params;
@@ -419,11 +394,11 @@ void open_port( struct glb *g ) {
 
 	s->newtp.c_cflag = CS8 |  CLOCAL | CREAD ; 
 
-	if (strncmp(p, "115200:", 7) == 0) s->newtp.c_cflag |= B115200; 
-	else if (strncmp(p, "57600:", 6) == 0) s->newtp.c_cflag |= B57600;
-	else if (strncmp(p, "38400:", 6) == 0) s->newtp.c_cflag |= B38400;
-	else if (strncmp(p, "19200:", 6) == 0) s->newtp.c_cflag |= B19200;
-	else if (strncmp(p, "9600:", 5) == 0) s->newtp.c_cflag |= B9600;
+	if (strncmp(p, "115200", 6) == 0) s->newtp.c_cflag |= B115200; 
+	else if (strncmp(p, "57600", 5) == 0) s->newtp.c_cflag |= B57600;
+	else if (strncmp(p, "38400", 5) == 0) s->newtp.c_cflag |= B38400;
+	else if (strncmp(p, "19200", 5) == 0) s->newtp.c_cflag |= B19200;
+	else if (strncmp(p, "9600", 4) == 0) s->newtp.c_cflag |= B9600;
 	else {
 		fprintf(stdout,"Invalid serial speed\r\n");
 		exit(1);
@@ -442,12 +417,7 @@ void open_port( struct glb *g ) {
 	fprintf(stdout,"Serial port opened, FD[%d]\n", s->fd);
 }
 
-uint8_t a2h( uint8_t a ) {
-	a -= 0x30;
-	if (a < 10) return a;
-	a -= 7;
-	return a;
-}
+
 
 int data_read( glb *g, char *b, ssize_t s ) {
 	ssize_t sz;
@@ -470,6 +440,8 @@ int data_read( glb *g, char *b, ssize_t s ) {
 
 	return sz;
 }
+
+
 
 int data_write( glb *g, const char *d, ssize_t s ) { 
 	ssize_t sz;
@@ -581,15 +553,10 @@ int main ( int argc, char **argv ) {
 	// Numlock = Mod2Mask / 0x10
 	// Windows key = Mod4Mask / 0x40
 
-	//grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_R), ControlMask|Mod1Mask);
-	//     grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_V), ControlMask|Mod1Mask);
-	//   grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_C), ControlMask|Mod1Mask);
-	// grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_D), ControlMask|Mod1Mask);
-	//     XSelectInput(dpy, root, KeyPressMask);
-	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_R), Mod4Mask|Mod1Mask);
-	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_V), Mod4Mask|Mod1Mask);
-	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_C), Mod4Mask|Mod1Mask);
-	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_D), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_r), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_v), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_c), Mod4Mask|Mod1Mask);
+	grab_key(dpy, grab_window, XKeysymToKeycode(dpy,XK_d), Mod4Mask|Mod1Mask);
 	XSelectInput(dpy, root, KeyPressMask);
 
 
@@ -736,6 +703,11 @@ int main ( int argc, char **argv ) {
 
 
 		{
+			/*
+			 * Rendering
+			 *
+			 *
+			 */
 			int texW = 0;
 			int texH = 0;
 			int texW2 = 0;
