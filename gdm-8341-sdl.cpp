@@ -99,6 +99,7 @@ struct mmode_s mmodes[] = {
 
 const char SCPI_FUNC[] = "SENS:FUNC1?\r\n";
 const char SCPI_VAL[] = "VAL1?\r\n";
+const char SCPI_LOCAL[] = "SYST:LOC\r\n";
 
 const char SEPARATOR_DP[] = ".";
 
@@ -312,7 +313,6 @@ int parse_parameters(struct glb *g, int argc, char **argv ) {
 							 break;
 
 				case 'c':
-							 int a,b,c;
 							 if (argv[i][2] == 'v') {
 								 i++;
 								 sscanf(argv[i], "%2hhx%2hhx%2hhx"
@@ -420,7 +420,6 @@ void open_port( struct glb *g ) {
 
 
 int data_read( glb *g, char *b, ssize_t s ) {
-	ssize_t sz;
 	int bp = 0;
 	ssize_t bytes_read = 0;
 
@@ -438,7 +437,7 @@ int data_read( glb *g, char *b, ssize_t s ) {
 	} while (bytes_read && bp < s);
 	b[bp] = '\0';
 
-	return sz;
+	return bp;
 }
 
 
@@ -494,8 +493,6 @@ int main ( int argc, char **argv ) {
 	char linetmp[SSIZE]; // temporary string for building main line of text
 
 	struct glb g;        // Global structure for passing variables around
-	int i = 0;           // Generic counter
-	char temp_char;        // Temporary character
 	char tfn[4096];
 	bool quit = false;
 	bool paused = false;
@@ -536,13 +533,7 @@ int main ( int argc, char **argv ) {
 	Display*    dpy     = XOpenDisplay(0);
 	Window      root    = DefaultRootWindow(dpy);
 	XEvent      ev;
-
-	unsigned int    modifiers       = ControlMask | ShiftMask;
-	int             keycode         = XKeysymToKeycode(dpy,XK_K);
 	Window          grab_window     =  root;
-	Bool            owner_events    = true;
-	int             pointer_mode    = GrabModeAsync;
-	int             keyboard_mode   = GrabModeAsync;
 
 
 	// Shift key = ShiftMask / 0x01
@@ -568,7 +559,7 @@ int main ( int argc, char **argv ) {
 	SDL_Init(SDL_INIT_VIDEO);
 	TTF_Init();
 	TTF_Font *font = TTF_OpenFont("RobotoMono-Regular.ttf", g.font_size);
-	TTF_Font *font_small = TTF_OpenFont("RobotoMono-Regular.ttf", g.font_size/4);
+	//TTF_Font *font_small = TTF_OpenFont("RobotoMono-Regular.ttf", g.font_size/4);
 
 	/*
 	 * Get the required window size.
@@ -606,14 +597,7 @@ int main ( int argc, char **argv ) {
 		char line2[1024];
 		char buf[100];
 
-		char *p, *q;
-		double v = 0.0;
-		int end_of_frame_received = 0;
 		int mi = 0;
-		uint8_t range;
-		uint8_t dpp = 0;
-		ssize_t bytes_read = 0;
-		ssize_t sz;
 
 		if (!paused && !quit) {
 			if (XCheckMaskEvent(dpy, KeyPressMask, &ev)) {
@@ -653,12 +637,12 @@ int main ( int argc, char **argv ) {
 			{
 				case SDL_KEYDOWN:
 					if (event.key.keysym.sym == SDLK_q) {
-						data_write( &g, "SYST:LOC\r\n", strlen("SYST:LOC\r\n") );
+						data_write( &g, SCPI_LOCAL, strlen(SCPI_LOCAL) );
 						quit = true;
 					}
 					if (event.key.keysym.sym == SDLK_p) {
 						paused ^= 1;
-						if (paused == true) data_write( &g, "SYST:LOC\r\n", strlen("SYST:LOC\r\n") );
+						if (paused == true) data_write( &g, SCPI_LOCAL, strlen(SCPI_LOCAL) );
 					}
 					break;
 				case SDL_QUIT:
@@ -671,14 +655,14 @@ int main ( int argc, char **argv ) {
 
 
 		if (!paused && !quit) {
-			sz = data_write( &g, SCPI_FUNC, strlen(SCPI_FUNC));
+			data_write( &g, SCPI_FUNC, strlen(SCPI_FUNC));
 			usleep(2000);
-			sz = data_read( &g, buf, sizeof(buf) );
+			data_read( &g, buf, sizeof(buf) );
 			for (mi = 0; mi < MMODES_MAX; mi++) {
 				if (strcmp(buf, mmodes[mi].scpi)==0) {
 					if (g.debug) fprintf(stderr,"%s:%d: HIT on '%s' index %d\n", FL, buf, mi);
-					sz = data_write( &g, SCPI_VAL, strlen(SCPI_VAL) );
-					sz = data_read( &g, buf, sizeof(buf) );
+					data_write( &g, SCPI_VAL, strlen(SCPI_VAL) );
+					data_read( &g, buf, sizeof(buf) );
 					break;
 				}
 			}
