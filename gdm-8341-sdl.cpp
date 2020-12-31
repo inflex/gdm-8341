@@ -44,8 +44,6 @@
 
 #define SSIZE 1024
 
-#define INTERFRAME_SLEEP	200000 // 0.2 seconds
-
 #define ee ""
 #define uu "\u00B5"
 #define kk "k"
@@ -99,7 +97,7 @@ struct mmode_s mmodes[] = {
 };
 
 const char SCPI_FUNC[] = "SENS:FUNC1?\r\n";
-const char SCPI_VAL[] = "VAL1?\r\n";
+const char SCPI_VAL1[] = "VAL1?\r\n";
 const char SCPI_VAL2[] = "VAL2?\r\n";
 const char SCPI_CONT_THRESHOLD[] = "SENS:CONT:THR?\r\n";
 const char SCPI_LOCAL[] = "SYST:LOC\r\n";
@@ -182,7 +180,7 @@ int init(struct glb *g) {
 	g->flags = 0;
 	g->error_flag = 0;
 	g->output_file = NULL;
-	g->interval = 10000;
+	g->interval = 100000; // 100ms / 100,000us interval of sleeping between frames
 	g->device = NULL;
 	g->comms_mode = CMODE_NONE;
 
@@ -220,7 +218,7 @@ void show_help(void) {
 			"\t-p <comport>: Set the com port for the meter, eg: -p /dev/ttyUSB0\r\n"
 			"\t-s <115200|57600|38400|19200|9600> serial speed (default 115200)\r\n"
 			"\r\n"
-			"\texample: gdm-8341-sdl -p /dev/ttyUSB0 -s 115200\r\n"
+			"\texample: gdm-8341-sdl -p /dev/ttyUSB0 -s 38400\r\n"
 			, BUILD_VER
 			, BUILD_DATE 
 			);
@@ -370,10 +368,15 @@ int parse_parameters(struct glb *g, int argc, char **argv ) {
 
 
 /*
- * Default parameters are 2400:8n1, given that the multimeter
- * is shipped like this and cannot be changed then we shouldn't
- * have to worry about needing to make changes, but we'll probably
- * add that for future changes.
+ * open_port()
+ *
+ * The GDM-8341 is fixed in the 8n1 parameters but the
+ * serial speed can vary between 9600-115200
+ *
+ * No flow control
+ *
+ * Default is 115200
+ *
  *
  */
 void open_port( struct glb *g ) {
@@ -385,7 +388,7 @@ void open_port( struct glb *g ) {
 
 	if (!p) p = default_params;
 
-	if (g->debug) fprintf(stderr,"Attempting to open '%s'\n", s->device);
+	if (g->debug) fprintf(stderr,"%s:%d: Attempting to open '%s'\n", FL, s->device);
 	s->fd = open( s->device, O_RDWR | O_NOCTTY | O_NDELAY );
 	if (s->fd <0) {
 		perror( s->device );
@@ -422,7 +425,13 @@ void open_port( struct glb *g ) {
 }
 
 
-
+/*
+ * data_read()
+ *
+ * char *b : buffer for data
+ * ssize_t s : size of buffer; function returns if size limit is hit
+ *
+ */
 int data_read( glb *g, char *b, ssize_t s ) {
 	int bp = 0;
 	ssize_t bytes_read = 0;
@@ -446,6 +455,12 @@ int data_read( glb *g, char *b, ssize_t s ) {
 
 
 
+/*
+ * data_write()
+ *		const char *d : pointer to data to write/send
+ *		ssize_t s : number of bytes to send
+ *
+ */
 int data_write( glb *g, const char *d, ssize_t s ) { 
 	ssize_t sz;
 
@@ -460,6 +475,13 @@ int data_write( glb *g, const char *d, ssize_t s ) {
 }
 
 
+/*
+ * grab_key()
+ *
+ * Function sets up a global XGrabKey() and additionally registers
+ * for num and cap lock keyboard combinations.
+ *
+ */
 void grab_key(Display* display, Window rootWindow, int keycode, int modifier) {
 	XGrabKey(display, keycode, modifier, rootWindow, false, GrabModeAsync, GrabModeAsync);
 
@@ -600,7 +622,6 @@ int main ( int argc, char **argv ) {
 	while (!quit) {
 		char line1[1024];
 		char line2[1024];
-		char line3[1024];
 		char buf[100];
 		char range[100];
 		char value[100];
@@ -673,7 +694,7 @@ int main ( int argc, char **argv ) {
 			for (mi = 0; mi < MMODES_MAX; mi++) {
 				if (strcmp(buf, mmodes[mi].scpi)==0) {
 					if (g.debug) fprintf(stderr,"%s:%d: HIT on '%s' index %d\n", FL, buf, mi);
-					data_write( &g, SCPI_VAL, strlen(SCPI_VAL) );
+					data_write( &g, SCPI_VAL1, strlen(SCPI_VAL1) );
 					data_read( &g, buf, sizeof(buf) );
 					data_write( &g, SCPI_RANGE, strlen(SCPI_RANGE) );
 					data_read( &g, range, sizeof(range) );
@@ -874,8 +895,6 @@ int main ( int argc, char **argv ) {
 			} else {
 				usleep(g.interval);
 			}
-
-
 		}
 
 
