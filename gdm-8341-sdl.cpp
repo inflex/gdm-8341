@@ -601,11 +601,25 @@ int main ( int argc, char **argv ) {
 	if (g.wy_forced) g.window_height = g.wy_forced;
 
 	SDL_Window *window = SDL_CreateWindow("gdm-8341", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, g.window_width, g.window_height, 0);
-	SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
+	SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
 	if (!font) {
 		fprintf(stderr,"Error trying to open font :( \r\n");
 		exit(1);
 	}
+	SDL_RendererInfo info;
+	SDL_GetRendererInfo( renderer, &info );
+	fprintf(stderr,"Renderer Information --\n"\
+			"Name: %s\n"\
+			"Flags: %lX\n"\
+			"%s%s%s%s\n"
+			"---\n"\
+			, info.name
+			, info.flags
+			, info.flags&SDL_RENDERER_SOFTWARE?"Software":""
+			, info.flags&SDL_RENDERER_ACCELERATED?"Accelerated":""
+			, info.flags&SDL_RENDERER_PRESENTVSYNC?"Vsync Sync":""
+			, info.flags&SDL_RENDERER_TARGETTEXTURE?"Target texture supported":""
+			);
 
 	/* Select the color for drawing. It is set to red here. */
 	SDL_SetRenderDrawColor(renderer, g.background_color.r, g.background_color.g, g.background_color.b, 255 );
