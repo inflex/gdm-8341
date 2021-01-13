@@ -80,6 +80,20 @@ struct mmode_s {
 #define MMODES_CAP 12
 #define MMODES_MAX 13
 
+
+#define READSTATE_NONE		0
+#define READSTATE_READING_FUNCTION	1
+#define READSTATE_FINISHED_FUNCTION 2
+#define READSTATE_READING_VAL 3
+#define READSTATE_FINISHED_VAL 4
+#define READSTATE_READING_RANGE 5
+#define READSTATE_FINISHED_RANGE 6
+#define READSTATE_FINISHED_ALL 7
+#define READSTATE_DONE		8
+#define READSTATE_ERROR 999
+
+#define READ_BUF_SIZE 4096
+
 struct mmode_s mmodes[] = { 
 	{"VOLT", "Volts DC", "MEAS:VOLT:DC?\r\n", "V DC"}, 
 	{"VOLT:AC", "Volts AC", "MEAS:VOLT:AC?\r\n", "V AC"},
@@ -128,6 +142,16 @@ struct glb {
 	char *serial_parameters_string; // this is the raw from the command line
 	struct serial_params_s serial_params; // this is the decoded version
 
+	int mode_index;
+	int read_state;
+	char read_buffer[READ_BUF_SIZE];
+	char *bp;
+	ssize_t bytes_remaining;
+
+	double v;
+	char value[READ_BUF_SIZE];
+	char func[READ_BUF_SIZE];
+	char range[READ_BUF_SIZE];
 
 	int interval;
 	int font_size;
@@ -175,6 +199,8 @@ Changes:
 
 \------------------------------------------------------------------*/
 int init(struct glb *g) {
+	g->read_state = READSTATE_NONE;
+	g->mode_index = MMODES_MAX;
 	g->debug = 0;
 	g->quiet = 0;
 	g->flags = 0;
@@ -401,6 +427,9 @@ void open_port( struct glb *g ) {
 
 	s->newtp.c_cflag = CS8 |  CLOCAL | CREAD ; 
 
+	s->newtp.c_cc[VTIME] = 10;
+	s->newtp.c_cc[VMIN] = 0;
+
 	if (strncmp(p, "115200", 6) == 0) s->newtp.c_cflag |= B115200; 
 	else if (strncmp(p, "57600", 5) == 0) s->newtp.c_cflag |= B57600;
 	else if (strncmp(p, "38400", 5) == 0) s->newtp.c_cflag |= B38400;
@@ -432,7 +461,7 @@ void open_port( struct glb *g ) {
  * ssize_t s : size of buffer; function returns if size limit is hit
  *
  */
-int data_read( glb *g, char *b, ssize_t s ) {
+int data_read( glb *g ) {
 	int bp = 0;
 	ssize_t bytes_read = 0;
 
@@ -440,15 +469,21 @@ int data_read( glb *g, char *b, ssize_t s ) {
 		char temp_char;
 		bytes_read = read(g->serial_params.fd, &temp_char, 1);
 		if (bytes_read) {
-			b[bp] = temp_char;
-			if (b[bp] == '\n') break;
-			if (b[bp] != '\r') {
-				if (g->debug) fprintf(stderr,"%c", b[bp]);
-				bp++;
+			*(g->bp) = temp_char;
+			if (*(g->bp) == '\n')  {
+				g->read_state++; // switch to next read state
+				*(g->bp) = '\0';
+				break;
+			}
+
+			if (*(g->bp) != '\r') {
+				if (g->debug) fprintf(stderr,"%c", *(g->bp));
+				(g->bp)++;
+				*(g->bp) = '\0';
+				g->bytes_remaining--;
 			}
 		}
-	} while (bytes_read && bp < s);
-	b[bp] = '\0';
+	} while (bytes_read && g->bytes_remaining > 0);
 
 	return bp;
 }
@@ -633,14 +668,11 @@ int main ( int argc, char **argv ) {
 	 * and hope that the almighty PID 1 will reap us
 	 *
 	 */
-	while (!quit) {
-		char line1[1024];
-		char line2[1024];
-		char buf[100];
-		char range[100];
-		char value[100];
-		char rs[100];
+	char line1[1024];
+	char line2[1024];
+	char rs[100];
 
+	while (!quit) {
 		int mi = 0;
 
 		if (!paused && !quit) {
@@ -702,165 +734,205 @@ int main ( int argc, char **argv ) {
 
 
 		if (!paused && !quit) {
-			data_write( &g, SCPI_FUNC, strlen(SCPI_FUNC));
-			usleep(2000);
-			data_read( &g, buf, sizeof(buf) );
-			for (mi = 0; mi < MMODES_MAX; mi++) {
-				if (strcmp(buf, mmodes[mi].scpi)==0) {
-					if (g.debug) fprintf(stderr,"%s:%d: HIT on '%s' index %d\n", FL, buf, mi);
+
+			if (g.read_state != READSTATE_NONE && g.read_state != READSTATE_DONE) {
+				data_read( &g );
+			}
+
+			switch (g.read_state) {
+				case READSTATE_NONE:
+				case READSTATE_DONE:
+					data_write( &g, SCPI_FUNC, strlen(SCPI_FUNC));
+					g.bp = g.read_buffer; *(g.bp) = '\0'; g.bytes_remaining = READ_BUF_SIZE;
+					g.read_state = READSTATE_READING_FUNCTION;
+					break;
+
+				case READSTATE_FINISHED_FUNCTION:
+					// check the value of the buffer and determine
+					// which mode-index (mi) we need for later --- idiot!
+					//
+					for (mi = 0; mi < MMODES_MAX; mi++) {
+						if (strcmp(g.read_buffer, mmodes[mi].scpi)==0) {
+							if (g.debug) fprintf(stderr,"%s:%d: HIT on '%s' index %d\n", FL, g.read_buffer, mi);
+							break;
+						}
+					}
+
+					if (mi == MMODES_MAX) {
+						fprintf(stderr,"%s:%d: Unknown mode '%s'\n", FL, g.read_buffer);
+						continue;
+					}
+					g.mode_index = mi;
+
 					data_write( &g, SCPI_VAL1, strlen(SCPI_VAL1) );
-					data_read( &g, buf, sizeof(buf) );
+					g.read_state = READSTATE_READING_VAL;
+					g.bp = g.read_buffer; *(g.bp) = '\0'; g.bytes_remaining = READ_BUF_SIZE;
+					break;
+
+				case READSTATE_FINISHED_VAL:
+					g.v = strtod(g.read_buffer, NULL);
+					snprintf(g.value, sizeof(g.value), "%f", g.v);
+
 					data_write( &g, SCPI_RANGE, strlen(SCPI_RANGE) );
-					data_read( &g, range, sizeof(range) );
+					g.read_state = READSTATE_READING_RANGE;
+					g.bp = g.read_buffer; *(g.bp) = '\0'; g.bytes_remaining = READ_BUF_SIZE;
 					break;
+
+				case READSTATE_FINISHED_RANGE:
+					snprintf(g.range, sizeof(g.range), "%s", g.read_buffer);
+					g.read_state = READSTATE_FINISHED_ALL;
+					break;
+
+				case READSTATE_ERROR:
+				default:
+					snprintf(g.range,sizeof(g.range),"---");
+					snprintf(g.value,sizeof(g.value),"---");
+					snprintf(g.func,sizeof(g.func),"no data, check port");
+					fprintf(stderr,"default readstate reached, error!\n");
+					g.read_state = READSTATE_FINISHED_ALL;
+					break;
+			} // switch readstate
+
+			if (g.read_state == READSTATE_FINISHED_ALL) {
+				g.read_state = READSTATE_DONE;
+
+				switch (mi) {
+					case MMODES_VOLT_DC:
+						if (strcmp(g.range,"0.5")==0) { 
+							snprintf(g.value,sizeof(g.value),"% 07.2f mV DC", g.v *1000.0);
+							snprintf(rs,sizeof(rs),"500mV");
+						}
+						else if (strcmp(g.range, "5")==0) { 
+							snprintf(g.value, sizeof(g.value), "% 07.4f V DC", g.v);
+							snprintf(rs,sizeof(rs),"5V");
+						}
+						else if (strcmp(g.range, "50")==0) { 
+							snprintf(g.value, sizeof(g.value), "% 07.3f V DC", g.v);
+							snprintf(rs,sizeof(rs),"50V");
+						}
+						else if (strcmp(g.range, "500")==0) { 
+							snprintf(g.value, sizeof(g.value), "% 07.2f V DC", g.v);
+							snprintf(rs,sizeof(rs),"500V");
+						}
+						else if (strcmp(g.range, "1000")==0) { 
+							snprintf(g.value, sizeof(g.value), "% 07.1f V DC", g.v);
+							snprintf(rs,sizeof(rs),"1000V");
+						}
+						break;
+
+					case MMODES_VOLT_AC:
+						if (strcmp(g.range,"0.5")==0) { 
+							snprintf(g.value,sizeof(g.value),"% 07.2f mV AC", g.v *1000.0);
+							snprintf(rs,sizeof(rs),"500mV");
+						}
+						else if (strcmp(g.range, "5")==0) { snprintf(g.value, sizeof(g.value), "% 07.4f V AC", g.v);
+							snprintf(rs,sizeof(rs),"5V");
+						}
+						else if (strcmp(g.range, "50")==0) { snprintf(g.value, sizeof(g.value), "% 07.3f V AC", g.v);
+							snprintf(rs,sizeof(rs),"50V");
+						}
+						else if (strcmp(g.range, "500")==0) { snprintf(g.value, sizeof(g.value), "% 07.2f V AC", g.v);
+							snprintf(rs,sizeof(rs),"500V");
+						}
+						else if (strcmp(g.range, "750")==0) { snprintf(g.value, sizeof(g.value), "% 07.1f V AC", g.v);
+							snprintf(rs,sizeof(rs),"750V");
+						}
+						break;
+
+					case MMODES_VOLT_DCAC:
+						if (strcmp(g.range,"0.5")==0) snprintf(g.value,sizeof(g.value),"% 07.2f mV DCAC", g.v *1000.0);
+						else if (strcmp(g.range, "5")==0) snprintf(g.value, sizeof(g.value), "% 07.4f V DCAC", g.v);
+						else if (strcmp(g.range, "50")==0) snprintf(g.value, sizeof(g.value), "% 07.3f V DCAC", g.v);
+						else if (strcmp(g.range, "500")==0) snprintf(g.value, sizeof(g.value), "% 07.2f V DCAC", g.v);
+						else if (strcmp(g.range, "750")==0) snprintf(g.value, sizeof(g.value), "% 07.1f V DCAC", g.v);
+						break;
+
+					case MMODES_CURR_AC:
+						if (strcmp(g.range,"0.0005")==0) snprintf(g.value,sizeof(g.value),"%06.2f %sA AC", g.v, uu);
+						else if (strcmp(g.range, "0.005")==0) snprintf(g.value, sizeof(g.value), "%06.4f mA AC", g.v);
+						else if (strcmp(g.range, "0.05")==0) snprintf(g.value, sizeof(g.value), "%06.3f mA AC", g.v);
+						else if (strcmp(g.range, "0.5")==0) snprintf(g.value, sizeof(g.value), "%06.2f mA AC", g.v);
+						else if (strcmp(g.range, "5")==0) snprintf(g.value, sizeof(g.value), "%06.1f A AC", g.v);
+						else if (strcmp(g.range, "10")==0) snprintf(g.value, sizeof(g.value), "%06.3f A AC", g.v);
+						break;
+
+					case MMODES_CURR_DC:
+						if (strcmp(g.range,"0.0005")==0) snprintf(g.value,sizeof(g.value),"%06.2f %sA DC", g.v, uu);
+						else if (strcmp(g.range, "0.005")==0) snprintf(g.value, sizeof(g.value), "%06.4f mA DC", g.v);
+						else if (strcmp(g.range, "0.05")==0) snprintf(g.value, sizeof(g.value), "%06.3f mA DC", g.v);
+						else if (strcmp(g.range, "0.5")==0) snprintf(g.value, sizeof(g.value), "%06.2f mA DC", g.v);
+						else if (strcmp(g.range, "5")==0) snprintf(g.value, sizeof(g.value), "%06.1f A DC", g.v);
+						else if (strcmp(g.range, "10")==0) snprintf(g.value, sizeof(g.value), "%06.3f A DC", g.v);
+						break;
+
+					case MMODES_RES:
+						if (strcmp(g.range,"50E+1")==0) { snprintf(g.value,sizeof(g.value),"%06.2f %s", g.v, oo);
+							snprintf(rs,sizeof(rs),"500%s",oo); }
+						else if (strcmp(g.range, "50E+2")==0){ snprintf(g.value, sizeof(g.value), "%06.4f k%s", g.v /1000, oo);
+							snprintf(rs,sizeof(rs),"5K%s",oo); }
+						else if (strcmp(g.range, "50E+3")==0){ snprintf(g.value, sizeof(g.value), "%06.3f k%s", g.v /1000, oo);
+							snprintf(rs,sizeof(rs),"50K%s",oo); }
+						else if (strcmp(g.range, "50E+4")==0){ snprintf(g.value, sizeof(g.value), "%06.2f k%s", g.v /1000, oo);
+							snprintf(rs,sizeof(rs),"500K%s",oo); }
+						else if (strcmp(g.range, "50E+5")==0){ snprintf(g.value, sizeof(g.value), "%06.4f M%s", g.v /1000000, oo);
+							snprintf(rs,sizeof(rs),"5M%s",oo); }
+						else if (strcmp(g.range, "50E+6")==0){ snprintf(g.value, sizeof(g.value), "%06.3f M%s", g.v /1000000, oo);
+							snprintf(rs,sizeof(rs),"50M%s",oo); }
+						if (g.v >= 51000000000000) snprintf(g.value, sizeof(g.value), "O.L");
+						break;
+
+					case MMODES_CAP:
+						if (strcmp(g.range,"5E-9")==0) { snprintf(g.value,sizeof(g.value),"% 6.3f nF", g.v *1E+9 );
+							snprintf(rs,sizeof(rs),"5nF"); }
+						else if (strcmp(g.range, "5E-8")==0){ snprintf(g.value, sizeof(g.value), "% 06.2f nF", g.v *1E+9);
+							snprintf(rs,sizeof(rs),"50nF"); }
+						else if (strcmp(g.range, "5E-7")==0){ snprintf(g.value, sizeof(g.value), "% 06.1f nF", g.v *1E+9);
+							snprintf(rs,sizeof(rs),"500nF"); }
+						else if (strcmp(g.range, "5E-6")==0){ snprintf(g.value, sizeof(g.value), "% 06.3f %sF", g.v *1E+6, uu);
+							snprintf(rs,sizeof(rs),"5%sF",uu); }
+						else if (strcmp(g.range, "5E-5")==0){ snprintf(g.value, sizeof(g.value), "% 06.2f %sF", g.v *1E+6, uu);
+							snprintf(rs,sizeof(rs),"50%sF",uu); }
+						if (g.v >= 51000000000000) snprintf(g.value, sizeof(g.value), "O.L");
+						break;
+
+
+					case MMODES_CONT:
+						{ 
+							//						char v2[100];
+							//						double threshold;
+							//						data_write( &g, SCPI_CONT_THRESHOLD, strlen(SCPI_CONT_THRESHOLD) );
+							//						data_read( &g, g.v2, sizeof(v2) );
+							//						threshold = strtod(v2, NULL);
+							if (g.v > 20) {
+								if (g.v > 1000) g.v = 999.9;
+								snprintf(g.value, sizeof(g.value), "OPEN [%05.1f%s]", g.v, oo);
+							}
+							else {
+								snprintf(g.value, sizeof(g.value), "SHRT [%05.1f%s]", g.v, oo);
+							}
+							snprintf(g.range,sizeof(g.range),"None");
+						}
+						break;
+
+					case MMODES_DIOD:
+						{ 
+							if (g.v > 9.999) {
+								snprintf(g.value, sizeof(g.value), "OPEN / OL");
+							} else {
+								snprintf(g.value, sizeof(g.value), "%06.4f V", g.v);
+							}
+							snprintf(g.range,sizeof(g.range),"None");
+						}
+						break;
+
+
 				}
-			}
-			if (mi == MMODES_MAX) {
-				fprintf(stderr,"%s:%d: Unknown mode '%s'\n", FL, buf);
-				continue;
-			}
-
-			double v = strtod(buf, NULL);
-
-			snprintf(value, sizeof(value), "%f", v);
-			snprintf(rs, sizeof(rs), " ");
-
-			switch (mi) {
-				case MMODES_VOLT_DC:
-					if (strcmp(range,"0.5")==0) { 
-						snprintf(value,sizeof(value),"% 07.2f mV DC", v *1000.0);
-						snprintf(rs,sizeof(rs),"500mV");
-					}
-					else if (strcmp(range, "5")==0) { 
-						snprintf(value, sizeof(value), "% 07.4f V DC", v);
-						snprintf(rs,sizeof(rs),"5V");
-					}
-					else if (strcmp(range, "50")==0) { 
-						snprintf(value, sizeof(value), "% 07.3f V DC", v);
-						snprintf(rs,sizeof(rs),"50V");
-					}
-					else if (strcmp(range, "500")==0) { 
-						snprintf(value, sizeof(value), "% 07.2f V DC", v);
-						snprintf(rs,sizeof(rs),"500V");
-					}
-					else if (strcmp(range, "1000")==0) { 
-						snprintf(value, sizeof(value), "% 07.1f V DC", v);
-						snprintf(rs,sizeof(rs),"1000V");
-					}
-					break;
-
-				case MMODES_VOLT_AC:
-					if (strcmp(range,"0.5")==0) { 
-						snprintf(value,sizeof(value),"% 07.2f mV AC", v *1000.0);
-						snprintf(rs,sizeof(rs),"500mV");
-					}
-					else if (strcmp(range, "5")==0) { snprintf(value, sizeof(value), "% 07.4f V AC", v);
-						snprintf(rs,sizeof(rs),"5V");
-					}
-					else if (strcmp(range, "50")==0) { snprintf(value, sizeof(value), "% 07.3f V AC", v);
-						snprintf(rs,sizeof(rs),"50V");
-					}
-					else if (strcmp(range, "500")==0) { snprintf(value, sizeof(value), "% 07.2f V AC", v);
-						snprintf(rs,sizeof(rs),"500V");
-					}
-					else if (strcmp(range, "750")==0) { snprintf(value, sizeof(value), "% 07.1f V AC", v);
-						snprintf(rs,sizeof(rs),"750V");
-					}
-					break;
-
-				case MMODES_VOLT_DCAC:
-					if (strcmp(range,"0.5")==0) snprintf(value,sizeof(value),"% 07.2f mV DCAC", v *1000.0);
-					else if (strcmp(range, "5")==0) snprintf(value, sizeof(value), "% 07.4f V DCAC", v);
-					else if (strcmp(range, "50")==0) snprintf(value, sizeof(value), "% 07.3f V DCAC", v);
-					else if (strcmp(range, "500")==0) snprintf(value, sizeof(value), "% 07.2f V DCAC", v);
-					else if (strcmp(range, "750")==0) snprintf(value, sizeof(value), "% 07.1f V DCAC", v);
-					break;
-
-				case MMODES_CURR_AC:
-					if (strcmp(range,"0.0005")==0) snprintf(value,sizeof(value),"%06.2f %sA AC", v, uu);
-					else if (strcmp(range, "0.005")==0) snprintf(value, sizeof(value), "%06.4f mA AC", v);
-					else if (strcmp(range, "0.05")==0) snprintf(value, sizeof(value), "%06.3f mA AC", v);
-					else if (strcmp(range, "0.5")==0) snprintf(value, sizeof(value), "%06.2f mA AC", v);
-					else if (strcmp(range, "5")==0) snprintf(value, sizeof(value), "%06.1f A AC", v);
-					else if (strcmp(range, "10")==0) snprintf(value, sizeof(value), "%06.3f A AC", v);
-					break;
-
-				case MMODES_CURR_DC:
-					if (strcmp(range,"0.0005")==0) snprintf(value,sizeof(value),"%06.2f %sA DC", v, uu);
-					else if (strcmp(range, "0.005")==0) snprintf(value, sizeof(value), "%06.4f mA DC", v);
-					else if (strcmp(range, "0.05")==0) snprintf(value, sizeof(value), "%06.3f mA DC", v);
-					else if (strcmp(range, "0.5")==0) snprintf(value, sizeof(value), "%06.2f mA DC", v);
-					else if (strcmp(range, "5")==0) snprintf(value, sizeof(value), "%06.1f A DC", v);
-					else if (strcmp(range, "10")==0) snprintf(value, sizeof(value), "%06.3f A DC", v);
-					break;
-
-				case MMODES_RES:
-					if (strcmp(range,"50E+1")==0) { snprintf(value,sizeof(value),"%06.2f %s", v, oo);
-						snprintf(rs,sizeof(rs),"500%s",oo); }
-					else if (strcmp(range, "50E+2")==0){ snprintf(value, sizeof(value), "%06.4f k%s", v /1000, oo);
-						snprintf(rs,sizeof(rs),"5K%s",oo); }
-					else if (strcmp(range, "50E+3")==0){ snprintf(value, sizeof(value), "%06.3f k%s", v /1000, oo);
-						snprintf(rs,sizeof(rs),"50K%s",oo); }
-					else if (strcmp(range, "50E+4")==0){ snprintf(value, sizeof(value), "%06.2f k%s", v /1000, oo);
-						snprintf(rs,sizeof(rs),"500K%s",oo); }
-					else if (strcmp(range, "50E+5")==0){ snprintf(value, sizeof(value), "%06.4f M%s", v /1000000, oo);
-						snprintf(rs,sizeof(rs),"5M%s",oo); }
-					else if (strcmp(range, "50E+6")==0){ snprintf(value, sizeof(value), "%06.3f M%s", v /1000000, oo);
-						snprintf(rs,sizeof(rs),"50M%s",oo); }
-					if (v >= 51000000000000) snprintf(value, sizeof(value), "O.L");
-					break;
-
-				case MMODES_CAP:
-					if (strcmp(range,"5E-9")==0) { snprintf(value,sizeof(value),"% 6.3f nF", v *1E+9 );
-						snprintf(rs,sizeof(rs),"5nF"); }
-					else if (strcmp(range, "5E-8")==0){ snprintf(value, sizeof(value), "% 06.2f nF", v *1E+9);
-						snprintf(rs,sizeof(rs),"50nF"); }
-					else if (strcmp(range, "5E-7")==0){ snprintf(value, sizeof(value), "% 06.1f nF", v *1E+9);
-						snprintf(rs,sizeof(rs),"500nF"); }
-					else if (strcmp(range, "5E-6")==0){ snprintf(value, sizeof(value), "% 06.3f %sF", v *1E+6, uu);
-						snprintf(rs,sizeof(rs),"5%sF",uu); }
-					else if (strcmp(range, "5E-5")==0){ snprintf(value, sizeof(value), "% 06.2f %sF", v *1E+6, uu);
-						snprintf(rs,sizeof(rs),"50%sF",uu); }
-					if (v >= 51000000000000) snprintf(value, sizeof(value), "O.L");
-					break;
-
-
-				case MMODES_CONT:
-					{ 
-						char v2[100];
-						double threshold;
-						data_write( &g, SCPI_CONT_THRESHOLD, strlen(SCPI_CONT_THRESHOLD) );
-						data_read( &g, v2, sizeof(v2) );
-						threshold = strtod(v2, NULL);
-						if (v > threshold) {
-							if (v > 1000) v = 999.9;
-							snprintf(value, sizeof(value), "OPEN [%05.1f%s]", v, oo);
-						}
-						else {
-							snprintf(value, sizeof(value), "SHRT [%05.1f%s]", v, oo);
-						}
-						snprintf(rs,sizeof(rs),"None");
-					}
-					break;
-
-				case MMODES_DIOD:
-					{ 
-						if (v > 9.999) {
-							snprintf(value, sizeof(value), "OPEN / OL");
-						} else {
-							snprintf(value, sizeof(value), "%06.4f V", v);
-						}
-						snprintf(rs,sizeof(rs),"None");
-					}
-					break;
-
+				snprintf(line1, sizeof(line1), "%s", g.value);
+				snprintf(line2, sizeof(line2), "%s, %s", mmodes[mi].label, g.range);
+				if (g.debug) fprintf(stderr,"Value:%f Range: %s\n", g.v, g.range);
 
 			}
-			snprintf(line1, sizeof(line1), "%s", value);
-			snprintf(line2, sizeof(line2), "%s, %s", mmodes[mi].label, rs);
-			if (g.debug) fprintf(stderr,"Value:%f Range: %s\n", v, range);
-
-		} else {
+		} else if ( paused ) {
 			snprintf(line1, sizeof(line1),"Paused");
 			snprintf(line2, sizeof(line2),"Press p");
 		}
