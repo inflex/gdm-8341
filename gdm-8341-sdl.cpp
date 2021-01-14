@@ -88,8 +88,10 @@ struct mmode_s {
 #define READSTATE_FINISHED_VAL 4
 #define READSTATE_READING_RANGE 5
 #define READSTATE_FINISHED_RANGE 6
-#define READSTATE_FINISHED_ALL 7
-#define READSTATE_DONE		8
+#define READSTATE_READING_CONTLIMIT 7
+#define READSTATE_FINISHED_CONTLIMIT 8
+#define READSTATE_FINISHED_ALL 9
+#define READSTATE_DONE		10
 #define READSTATE_ERROR 999
 
 #define READ_BUF_SIZE 4096
@@ -148,6 +150,7 @@ struct glb {
 	char *bp;
 	ssize_t bytes_remaining;
 
+	int cont_threshold;
 	double v;
 	char value[READ_BUF_SIZE];
 	char func[READ_BUF_SIZE];
@@ -201,6 +204,7 @@ Changes:
 int init(struct glb *g) {
 	g->read_state = READSTATE_NONE;
 	g->mode_index = MMODES_MAX;
+	g->cont_threshold = 20.0; // ohms
 	g->debug = 0;
 	g->quiet = 0;
 	g->flags = 0;
@@ -670,10 +674,8 @@ int main ( int argc, char **argv ) {
 	 */
 	char line1[1024];
 	char line2[1024];
-	char rs[100];
 
 	while (!quit) {
-		int mi = 0;
 
 		if (!paused && !quit) {
 			if (XCheckMaskEvent(dpy, KeyPressMask, &ev)) {
@@ -751,6 +753,7 @@ int main ( int argc, char **argv ) {
 					// check the value of the buffer and determine
 					// which mode-index (mi) we need for later --- idiot!
 					//
+					int mi;
 					for (mi = 0; mi < MMODES_MAX; mi++) {
 						if (strcmp(g.read_buffer, mmodes[mi].scpi)==0) {
 							if (g.debug) fprintf(stderr,"%s:%d: HIT on '%s' index %d\n", FL, g.read_buffer, mi);
@@ -762,6 +765,7 @@ int main ( int argc, char **argv ) {
 						fprintf(stderr,"%s:%d: Unknown mode '%s'\n", FL, g.read_buffer);
 						continue;
 					}
+
 					g.mode_index = mi;
 
 					data_write( &g, SCPI_VAL1, strlen(SCPI_VAL1) );
@@ -780,6 +784,17 @@ int main ( int argc, char **argv ) {
 
 				case READSTATE_FINISHED_RANGE:
 					snprintf(g.range, sizeof(g.range), "%s", g.read_buffer);
+					if (g.mode_index == MMODES_CONT) { 
+						g.bp = g.read_buffer; *(g.bp) = '\0'; g.bytes_remaining = READ_BUF_SIZE;
+						data_write( &g, SCPI_CONT_THRESHOLD, strlen(SCPI_CONT_THRESHOLD) );
+						g.read_state = READSTATE_READING_CONTLIMIT;
+					} else {
+						g.read_state = READSTATE_FINISHED_ALL;
+					}
+					break;
+
+				case READSTATE_FINISHED_CONTLIMIT:
+					g.cont_threshold = strtol(g.read_buffer, NULL, 10);
 					g.read_state = READSTATE_FINISHED_ALL;
 					break;
 
@@ -796,46 +811,46 @@ int main ( int argc, char **argv ) {
 			if (g.read_state == READSTATE_FINISHED_ALL) {
 				g.read_state = READSTATE_DONE;
 
-				switch (mi) {
+				switch (g.mode_index) {
 					case MMODES_VOLT_DC:
 						if (strcmp(g.range,"0.5")==0) { 
 							snprintf(g.value,sizeof(g.value),"% 07.2f mV DC", g.v *1000.0);
-							snprintf(rs,sizeof(rs),"500mV");
+							snprintf(g.range,sizeof(g.range),"500mV");
 						}
 						else if (strcmp(g.range, "5")==0) { 
 							snprintf(g.value, sizeof(g.value), "% 07.4f V DC", g.v);
-							snprintf(rs,sizeof(rs),"5V");
+							snprintf(g.range,sizeof(g.range),"5V");
 						}
 						else if (strcmp(g.range, "50")==0) { 
 							snprintf(g.value, sizeof(g.value), "% 07.3f V DC", g.v);
-							snprintf(rs,sizeof(rs),"50V");
+							snprintf(g.range,sizeof(g.range),"50V");
 						}
 						else if (strcmp(g.range, "500")==0) { 
 							snprintf(g.value, sizeof(g.value), "% 07.2f V DC", g.v);
-							snprintf(rs,sizeof(rs),"500V");
+							snprintf(g.range,sizeof(g.range),"500V");
 						}
 						else if (strcmp(g.range, "1000")==0) { 
 							snprintf(g.value, sizeof(g.value), "% 07.1f V DC", g.v);
-							snprintf(rs,sizeof(rs),"1000V");
+							snprintf(g.range,sizeof(g.range),"1000V");
 						}
 						break;
 
 					case MMODES_VOLT_AC:
 						if (strcmp(g.range,"0.5")==0) { 
 							snprintf(g.value,sizeof(g.value),"% 07.2f mV AC", g.v *1000.0);
-							snprintf(rs,sizeof(rs),"500mV");
+							snprintf(g.range,sizeof(g.range),"500mV");
 						}
 						else if (strcmp(g.range, "5")==0) { snprintf(g.value, sizeof(g.value), "% 07.4f V AC", g.v);
-							snprintf(rs,sizeof(rs),"5V");
+							snprintf(g.range,sizeof(g.range),"5V");
 						}
 						else if (strcmp(g.range, "50")==0) { snprintf(g.value, sizeof(g.value), "% 07.3f V AC", g.v);
-							snprintf(rs,sizeof(rs),"50V");
+							snprintf(g.range,sizeof(g.range),"50V");
 						}
 						else if (strcmp(g.range, "500")==0) { snprintf(g.value, sizeof(g.value), "% 07.2f V AC", g.v);
-							snprintf(rs,sizeof(rs),"500V");
+							snprintf(g.range,sizeof(g.range),"500V");
 						}
 						else if (strcmp(g.range, "750")==0) { snprintf(g.value, sizeof(g.value), "% 07.1f V AC", g.v);
-							snprintf(rs,sizeof(rs),"750V");
+							snprintf(g.range,sizeof(g.range),"750V");
 						}
 						break;
 
@@ -867,50 +882,45 @@ int main ( int argc, char **argv ) {
 
 					case MMODES_RES:
 						if (strcmp(g.range,"50E+1")==0) { snprintf(g.value,sizeof(g.value),"%06.2f %s", g.v, oo);
-							snprintf(rs,sizeof(rs),"500%s",oo); }
+							snprintf(g.range,sizeof(g.range),"500%s",oo); }
 						else if (strcmp(g.range, "50E+2")==0){ snprintf(g.value, sizeof(g.value), "%06.4f k%s", g.v /1000, oo);
-							snprintf(rs,sizeof(rs),"5K%s",oo); }
+							snprintf(g.range,sizeof(g.range),"5K%s",oo); }
 						else if (strcmp(g.range, "50E+3")==0){ snprintf(g.value, sizeof(g.value), "%06.3f k%s", g.v /1000, oo);
-							snprintf(rs,sizeof(rs),"50K%s",oo); }
+							snprintf(g.range,sizeof(g.range),"50K%s",oo); }
 						else if (strcmp(g.range, "50E+4")==0){ snprintf(g.value, sizeof(g.value), "%06.2f k%s", g.v /1000, oo);
-							snprintf(rs,sizeof(rs),"500K%s",oo); }
+							snprintf(g.range,sizeof(g.range),"500K%s",oo); }
 						else if (strcmp(g.range, "50E+5")==0){ snprintf(g.value, sizeof(g.value), "%06.4f M%s", g.v /1000000, oo);
-							snprintf(rs,sizeof(rs),"5M%s",oo); }
+							snprintf(g.range,sizeof(g.range),"5M%s",oo); }
 						else if (strcmp(g.range, "50E+6")==0){ snprintf(g.value, sizeof(g.value), "%06.3f M%s", g.v /1000000, oo);
-							snprintf(rs,sizeof(rs),"50M%s",oo); }
+							snprintf(g.range,sizeof(g.range),"50M%s",oo); }
 						if (g.v >= 51000000000000) snprintf(g.value, sizeof(g.value), "O.L");
 						break;
 
 					case MMODES_CAP:
 						if (strcmp(g.range,"5E-9")==0) { snprintf(g.value,sizeof(g.value),"% 6.3f nF", g.v *1E+9 );
-							snprintf(rs,sizeof(rs),"5nF"); }
+							snprintf(g.range,sizeof(g.range),"5nF"); }
 						else if (strcmp(g.range, "5E-8")==0){ snprintf(g.value, sizeof(g.value), "% 06.2f nF", g.v *1E+9);
-							snprintf(rs,sizeof(rs),"50nF"); }
+							snprintf(g.range,sizeof(g.range),"50nF"); }
 						else if (strcmp(g.range, "5E-7")==0){ snprintf(g.value, sizeof(g.value), "% 06.1f nF", g.v *1E+9);
-							snprintf(rs,sizeof(rs),"500nF"); }
+							snprintf(g.range,sizeof(g.range),"500nF"); }
 						else if (strcmp(g.range, "5E-6")==0){ snprintf(g.value, sizeof(g.value), "% 06.3f %sF", g.v *1E+6, uu);
-							snprintf(rs,sizeof(rs),"5%sF",uu); }
+							snprintf(g.range,sizeof(g.range),"5%sF",uu); }
 						else if (strcmp(g.range, "5E-5")==0){ snprintf(g.value, sizeof(g.value), "% 06.2f %sF", g.v *1E+6, uu);
-							snprintf(rs,sizeof(rs),"50%sF",uu); }
+							snprintf(g.range,sizeof(g.range),"50%sF",uu); }
 						if (g.v >= 51000000000000) snprintf(g.value, sizeof(g.value), "O.L");
 						break;
 
 
 					case MMODES_CONT:
 						{ 
-							//						char v2[100];
-							//						double threshold;
-							//						data_write( &g, SCPI_CONT_THRESHOLD, strlen(SCPI_CONT_THRESHOLD) );
-							//						data_read( &g, g.v2, sizeof(v2) );
-							//						threshold = strtod(v2, NULL);
-							if (g.v > 20) {
+							if (g.v > g.cont_threshold) {
 								if (g.v > 1000) g.v = 999.9;
 								snprintf(g.value, sizeof(g.value), "OPEN [%05.1f%s]", g.v, oo);
 							}
 							else {
 								snprintf(g.value, sizeof(g.value), "SHRT [%05.1f%s]", g.v, oo);
 							}
-							snprintf(g.range,sizeof(g.range),"None");
+							snprintf(g.range,sizeof(g.range),"Threshold: %d%s", g.cont_threshold, oo);
 						}
 						break;
 
@@ -928,7 +938,7 @@ int main ( int argc, char **argv ) {
 
 				}
 				snprintf(line1, sizeof(line1), "%s", g.value);
-				snprintf(line2, sizeof(line2), "%s, %s", mmodes[mi].label, g.range);
+				snprintf(line2, sizeof(line2), "%s, %s", mmodes[g.mode_index].label, g.range);
 				if (g.debug) fprintf(stderr,"Value:%f Range: %s\n", g.v, g.range);
 
 			}
