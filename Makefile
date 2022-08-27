@@ -7,8 +7,8 @@
 BV=1234
 BD=today
 SDLFLAGS=$(shell (sdl2-config --static-libs --cflags))
-#CFLAGS=  -Wall -O2 -DBUILD_VER="$(BV)" -DBUILD_DATE=\""$(BD)"\" -DFAKE_SERIAL=$(FAKE_SERIAL)
-CFLAGS=  -Wall -O0 -ggdb -g -DBUILD_VER="$(BV)" -DBUILD_DATE=\""$(BD)"\" -DFAKE_SERIAL=$(FAKE_SERIAL)
+CFLAGS=  -Wall -O2 -DBUILD_VER="$(BV)" -DBUILD_DATE=\""$(BD)"\" -DFAKE_SERIAL=$(FAKE_SERIAL)
+#CFLAGS=  -Wall -O0 -ggdb -g -DBUILD_VER="$(BV)" -DBUILD_DATE=\""$(BD)"\" -DFAKE_SERIAL=$(FAKE_SERIAL)
 LIBS=-lSDL2_ttf
 CC=gcc
 GCC=g++
