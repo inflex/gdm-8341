@@ -236,7 +236,7 @@ int init(struct glb *g) {
 }
 
 void show_help(void) {
-	fprintf(stdout,"gdm-8341 Power supply display\r\n"
+	fprintf(stdout,"GDM-8341 Multimeter display\r\n"
 			"By Paul L Daniels / pldaniels@gmail.com\r\n"
 			"Build %d / %s\r\n"
 			"\r\n"
@@ -282,11 +282,6 @@ Changes:
 \------------------------------------------------------------------*/
 int parse_parameters(struct glb *g, int argc, char **argv ) {
 	int i;
-
-	if (argc == 1) {
-		show_help();
-		exit(1);
-	}
 
 	for (i = 0; i < argc; i++) {
 		if (argv[i][0] == '-') {
@@ -530,6 +525,7 @@ int find_port( struct glb *g ) {
 							buf[bytes_read] = '\0';
 							if (g->debug) fprintf(stderr," %ld bytes read, '%s'\n", bytes_read, buf);
 							if (strstr(buf,"GDM8341")) {
+								fprintf(stderr,"Port %s selected\n", s->device);
 								if (g->debug) fprintf(stderr,"Port %s selected\n", s->device);
 								return PORT_OK;
 							}
@@ -660,9 +656,8 @@ int main ( int argc, char **argv ) {
 	 * Parse our command line parameters
 	 */
 	parse_parameters(&g, argc, argv);
-	if (g.device == NULL) {
-		fprintf(stdout,"Require valid device (ie, -p /dev/usbtmc2 )\nExiting\n");
-		exit(1);
+	if (strlen(g.device) < 1 ) {
+		find_port( &g );
 	}
 
 	if (g.debug) fprintf(stdout,"START\n");
@@ -680,7 +675,7 @@ int main ( int argc, char **argv ) {
 	if (g.output_file) snprintf(tfn,sizeof(tfn),"%s.tmp",g.output_file);
 
 
-	find_port( &g );
+//	find_port( &g );
 	//		  open_port( &g );
 
 	Display*    dpy     = XOpenDisplay(0);
