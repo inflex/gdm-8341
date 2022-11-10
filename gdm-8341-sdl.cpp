@@ -151,6 +151,7 @@ struct glb {
 	struct serial_params_s serial_params; // this is the decoded version
 
 	int mode_index;
+	int read_failure;
 	int read_state;
 	char read_buffer[READ_BUF_SIZE];
 	char *bp;
@@ -208,6 +209,7 @@ Changes:
 
 \------------------------------------------------------------------*/
 int init(struct glb *g) {
+	g->read_failure = 0;
 	g->read_state = READSTATE_NONE;
 	g->mode_index = MMODES_MAX;
 	g->cont_threshold = 20.0; // ohms
@@ -424,10 +426,12 @@ int open_port( struct glb *g ) {
 	s->fd = open( s->device, O_RDWR | O_NOCTTY | O_NDELAY );
 	if (s->fd <0) {
 		perror( s->device );
+		return -1;
 	}
 
 	r = flock(s->fd, LOCK_EX | LOCK_NB);
 	if (r == -1) {
+		close(s->fd); s->fd = -1;
 		fprintf(stderr, "%s:%d: Unable to set lock on %s, Error '%s'\n", FL, s->device, strerror(errno) );
 		return -1;
 	}
@@ -449,7 +453,8 @@ int open_port( struct glb *g ) {
 	else if (strncmp(p, "9600", 4) == 0) s->newtp.c_cflag |= B9600;
 	else {
 		fprintf(stdout,"Invalid serial speed\r\n");
-		exit(1);
+		close(s->fd); s->fd = -1;
+		return -1;
 	}
 
 	//  This meter only accepts 8n1, no flow control
@@ -459,6 +464,7 @@ int open_port( struct glb *g ) {
 	r = tcsetattr(s->fd, TCSANOW, &(s->newtp));
 	if (r) {
 		fprintf(stderr,"%s:%d: Error setting terminal (%s)\n", FL, strerror(errno));
+		close(s->fd); s->fd = -1;
 		return -1;
 	}
 
@@ -478,8 +484,10 @@ int find_port( struct glb *g ) {
 		For this multimeter, we actually *want* the read to time out
 		because it means that it's not just spewing out data, ie not
 		a SCPI device
-	 */
+		*/
 	struct serial_params_s *s = &(g->serial_params);
+	g->read_state = READSTATE_NONE;
+	g->read_failure = 0;
 
 	for ( int port_number = 0; port_number < 10; port_number++ ) {
 		snprintf(s->device, sizeof(s->device) -1, "/dev/ttyUSB%d", port_number);
@@ -492,7 +500,6 @@ int find_port( struct glb *g ) {
 
 			FD_ZERO(&set);
 			FD_SET(s->fd, &set);
-
 			timeout.tv_sec = 0;
 			timeout.tv_usec = 300000; // 0.3 seconds
 
@@ -512,7 +519,7 @@ int find_port( struct glb *g ) {
 				if (bytes_read > 0) {
 					/* 
 						not our meter!
-					 */
+						*/
 					break;
 				} else if ((rv == 0) && (bytes_read == 0)) {
 					char buf[100];
@@ -553,7 +560,50 @@ int find_port( struct glb *g ) {
 int data_read( glb *g ) {
 	int bp = 0;
 	ssize_t bytes_read = 0;
+	fd_set set;
+	struct timeval timeout;
 
+	// Non-blocking new code
+	//
+	FD_ZERO(&set);
+	FD_SET(g->serial_params.fd, &set);
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 500000; // 0.5 seconds
+
+	g->read_failure++;
+
+	{ 
+		int rv;
+		bytes_read = 0;
+
+		rv = select(g->serial_params.fd +1, &set, NULL, NULL, &timeout);
+		if (g->debug) fprintf(stderr,"select result = %d\n", rv);
+		if (rv == -1) {
+			return -1;
+//			break;
+		} else if (rv == 0 ) {
+			// Something bad happens here?
+		} else {
+			bytes_read = read(g->serial_params.fd, g->read_buffer, READ_BUF_SIZE);
+			if (bytes_read > 0) {
+				char *p = strchr(g->read_buffer, '\n');
+				if (p) {
+					*p = 0;
+					g->read_state++;
+					p = strchr(g->read_buffer, '\r');
+					if (p) *p = '\0';
+				}
+				g->read_failure = 0;
+			}
+		}
+
+	} // New code, non-blocking 
+
+
+	// Original blocking code
+	//
+	//
+	/*
 	do {
 		char temp_char;
 		bytes_read = read(g->serial_params.fd, &temp_char, 1);
@@ -573,6 +623,9 @@ int data_read( glb *g ) {
 			}
 		}
 	} while (bytes_read && g->bytes_remaining > 0);
+	*/
+	//
+	// End of original blocking code
 
 	return bp;
 }
@@ -588,6 +641,10 @@ int data_read( glb *g ) {
 int data_write( glb *g, const char *d, ssize_t s ) { 
 	ssize_t sz;
 
+	if (g->serial_params.fd < 1) {
+		fprintf(stderr,"%s:%d: Invalid com port file handle.  Not writing.\n", FL);
+		return -1;
+	}
 	if (g->debug) fprintf(stderr,"%s:%d: Sending '%s' [%ld bytes]\n", FL, d, s );
 	sz = write(g->serial_params.fd, d, s); 
 	if (sz < 0) {
@@ -675,7 +732,7 @@ int main ( int argc, char **argv ) {
 	if (g.output_file) snprintf(tfn,sizeof(tfn),"%s.tmp",g.output_file);
 
 
-//	find_port( &g );
+	//	find_port( &g );
 	//		  open_port( &g );
 
 	Display*    dpy     = XOpenDisplay(0);
@@ -808,6 +865,20 @@ int main ( int argc, char **argv ) {
 
 
 		if (!paused && !quit) {
+
+			if (g.read_failure > 5) {
+				g.debug = 1;
+				fprintf(stderr,"Excess read failures; trying to reacquire the COM port again.\n");
+				if (g.serial_params.fd > 1) {
+					close( g.serial_params.fd );
+					g.serial_params.fd = -1;
+				}
+				if (find_port( &g ) != PORT_OK) {
+					fprintf(stderr,"Unable to find a port with the multimeter, sleeping for 2 seconds\n");
+					sleep(2);
+				}
+				g.debug = 0;
+			}
 
 			if (g.read_state != READSTATE_NONE && g.read_state != READSTATE_DONE) {
 				data_read( &g );
