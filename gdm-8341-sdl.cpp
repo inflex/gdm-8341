@@ -491,13 +491,15 @@ int find_port( struct glb *g ) {
 
 	for ( int port_number = 0; port_number < 10; port_number++ ) {
 		snprintf(s->device, sizeof(s->device) -1, "/dev/ttyUSB%d", port_number);
-		if ( g->debug ) fprintf(stderr,"Testing port %s\n", s->device);
+		fprintf(stderr,"Testing port %s\n", s->device);
 		int r = open_port( g );
 		if (r == PORT_OK ) {
+			int purge_count = 0;
 			int bytes_read = 0;
 			fd_set set;
 			struct timeval timeout;
 
+			fprintf(stderr,"%s:%d Port %s opened; commence checking data...\n", FL, s->device);
 			FD_ZERO(&set);
 			FD_SET(s->fd, &set);
 			timeout.tv_sec = 0;
@@ -513,10 +515,27 @@ int find_port( struct glb *g ) {
 				if (rv == -1) {
 					break;
 				} else if (rv == 0 ) {
-				} else bytes_read = read(s->fd, &temp_char, 1);
+					// What am I expecting here?
+					//
+				} else { 
+					// Purge the serial buffer
+					// 
+					char buf[1000];
+					bytes_read = read(s->fd, buf, sizeof(buf)-1);
+					buf[bytes_read] = 0;
+					fprintf(stderr,"First read - Content found in buffer, buf[%d] = '%s'\n", bytes_read, buf);
+					if (bytes_read > 0) {
+						bytes_read = read(s->fd, buf, sizeof(buf)-1);
+						buf[bytes_read] = 0;
+						fprintf(stderr,"Second read - Content found in buffer, buf[%d] = '%s'\n", bytes_read, buf);
+					}
+				}
 
 				if (g->debug) fprintf(stderr,"%d bytes read after select\n", bytes_read);
 				if (bytes_read > 0) {
+					fprintf(stderr,"%s:%d: %d bytes in queue, not expected since we didn't query\n", FL, bytes_read);
+					close(s->fd);
+					continue;
 					/* 
 						not our meter!
 						*/
@@ -580,7 +599,7 @@ int data_read( glb *g ) {
 		if (g->debug) fprintf(stderr,"select result = %d\n", rv);
 		if (rv == -1) {
 			return -1;
-//			break;
+			//			break;
 		} else if (rv == 0 ) {
 			// Something bad happens here?
 		} else {
@@ -604,26 +623,26 @@ int data_read( glb *g ) {
 	//
 	//
 	/*
-	do {
+		do {
 		char temp_char;
 		bytes_read = read(g->serial_params.fd, &temp_char, 1);
 		if (bytes_read) {
-			*(g->bp) = temp_char;
-			if (*(g->bp) == '\n')  {
-				g->read_state++; // switch to next read state
-				*(g->bp) = '\0';
-				break;
-			}
+	 *(g->bp) = temp_char;
+	 if (*(g->bp) == '\n')  {
+	 g->read_state++; // switch to next read state
+	 *(g->bp) = '\0';
+	 break;
+	 }
 
-			if (*(g->bp) != '\r') {
-				if (g->debug) fprintf(stderr,"%c", *(g->bp));
-				(g->bp)++;
-				*(g->bp) = '\0';
-				g->bytes_remaining--;
-			}
-		}
-	} while (bytes_read && g->bytes_remaining > 0);
-	*/
+	 if (*(g->bp) != '\r') {
+	 if (g->debug) fprintf(stderr,"%c", *(g->bp));
+	 (g->bp)++;
+	 *(g->bp) = '\0';
+	 g->bytes_remaining--;
+	 }
+	 }
+	 } while (bytes_read && g->bytes_remaining > 0);
+	 */
 	//
 	// End of original blocking code
 
