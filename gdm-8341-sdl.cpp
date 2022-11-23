@@ -1150,7 +1150,9 @@ int main ( int argc, char **argv ) {
 			}
 
 			if (g.error_flag) {
+				g.error_flag = false;
 				sleep(1);
+
 			} else {
 				usleep(g.interval);
 			}
